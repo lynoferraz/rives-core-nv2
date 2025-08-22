@@ -39,13 +39,6 @@ def set_operator_address(payload: SetOperatorPayload) -> bool:
     return True
 
 @mutation(msg_sender=CoreSettings().admin_address)
-def set_internal_verify_lock(payload: SetLock) -> bool:
-    LOGGER.info(f"updating internal verify lock to {payload.lock}...")
-    CoreSettings().internal_verify_lock = payload.lock
-    CoreSettings().store_config()
-    return True
-
-@mutation(msg_sender=CoreSettings().admin_address)
 def set_cartridge_moderation_lock(payload: SetLock) -> bool:
     LOGGER.info(f"updating cartridge moderation lock to {payload.lock}...")
     CoreSettings().cartridge_moderation_lock = payload.lock
@@ -54,7 +47,7 @@ def set_cartridge_moderation_lock(payload: SetLock) -> bool:
 
 @mutation(msg_sender=CoreSettings().admin_address)
 def set_max_locked_cartridges(payload: SetMaxLockedCartridges) -> bool:
-    LOGGER.info(f"updating max locked cartridges to {payload.lock}...")
+    LOGGER.info(f"updating max locked cartridges to {payload.max_locked_cartridges}...")
     CoreSettings().max_locked_cartridges = payload.max_locked_cartridges
     CoreSettings().store_config()
     return True
@@ -62,7 +55,7 @@ def set_max_locked_cartridges(payload: SetMaxLockedCartridges) -> bool:
 @mutation(msg_sender=CoreSettings().admin_address)
 def update_rivos(payload: UpdateRivosPayload) -> bool:
 
-    LOGGER.info(f"updating riv...")
+    LOGGER.info("updating riv...")
     try:
         install_riv_version(payload.data)
     except Exception as e:
@@ -88,15 +81,9 @@ def admin_address() -> bool:
     return True
 
 @query()
-def proxy_address() -> bool:
-    add_output(CoreSettings().proxy_address)
-    return True
-
-@query()
 def config() -> bool:
     config = {
         "version": CoreSettings().version,
-        "internal_verify_lock": CoreSettings().internal_verify_lock,
         "cartridge_moderation_lock": CoreSettings().cartridge_moderation_lock,
         "max_locked_cartridges": CoreSettings().max_locked_cartridges,
     }

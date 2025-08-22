@@ -5,7 +5,7 @@ import json
 from py_expression_eval import Parser
 from enum import Enum
 
-from cartesi.abi import String, Bytes, Bytes32, Int, UInt, Address
+from cartesi.abi import String, Bytes, Bytes32, Int, UInt, Address, Bool
 
 from cartesapp.storage import helpers
 from cartesapp.context import get_metadata
@@ -13,8 +13,7 @@ from cartesapp.input import mutation, query
 from cartesapp.output import output, add_output, event, emit_event, index_input
 from cartesapp.utils import hex2bytes, bytes2str, str2bytes
 
-from .model import insert_rule, Rule, RuleTag, RuleData, Cartridge, Tape, \
-    AddressList, Bytes32List, UInt256List, Int256List, BytesList, Bytes32ListList, format_incard
+from .model import insert_rule, Rule, RuleTag, RuleData, Cartridge, Tape, format_incard
 
 from .riv import verify_log
 from .core_settings import CoreSettings, generate_tape_id, generate_rule_id, get_version, generate_entropy, get_cartridges_path, \
@@ -45,7 +44,7 @@ class VerifyPayload(BaseModel):
     outcard_hash:   Bytes32
     tape:           Bytes
     claimed_score:  Int
-    tapes:          Bytes32List
+    tapes:          List[Bytes32]
     in_card:        Bytes
 
 class GetRulesPayload(BaseModel):
@@ -66,31 +65,10 @@ class GetRulesPayload(BaseModel):
     full:           Optional[bool]
     enable_deactivated:Optional[bool]
 
-class GetTapesPayload(BaseModel):
-    cartridge_id:   Optional[str]
-    rule_id:        Optional[str]
-    id:             Optional[str]
-    ids:            Optional[List[str]]
-    timestamp_lte:  Optional[int]
-    timestamp_gte:  Optional[int]
-    user_address:   Optional[str]
-    page:           Optional[int]
-    page_size:      Optional[int]
-    order_by:       Optional[str]
-    order_dir:      Optional[str]
-    tags:           Optional[List[str]]
-    tags_or:        Optional[bool]
-    full:           Optional[bool]
-
-class ExternalVerificationPayload(BaseModel):
-    tape_ids:           Bytes32List
-    scores:             Int256List
-    error_codes:        UInt256List
-    outcards:           BytesList
-
 class AwardWinnerTapesPayload(BaseModel):
     rule_id:        Bytes32
     tapes_to_award: UInt
+    avoid_duplicates: Bool
 
 class CleanTapesPayload(BaseModel):
     rule_id:        Bytes32
@@ -145,7 +123,7 @@ class VerificationOutput(BaseModel):
     tape_id:                Bytes32
     tape_input_index:       Int
     error_code:             UInt
-    tapes:                  Bytes32List
+    tapes:                  List[Bytes32]
 
 @event()
 class TapeAward(BaseModel):
@@ -187,7 +165,7 @@ class RuleInfo(BaseModel):
     save_out_cards: Optional[bool]
     tapes: Optional[List[str]]
     deactivated: Optional[bool]
-    
+
 @output()
 class RulesOutput(BaseModel):
     data:   List[RuleInfo]
@@ -212,7 +190,7 @@ class TapeInfo(BaseModel):
     data: Optional[bytes]
     out_card: Optional[bytes]
     tapes: Optional[List[str]]
-    
+
 @output()
 class TapesOutput(BaseModel):
     data:   List[TapeInfo]
@@ -224,7 +202,7 @@ class TapesOutput(BaseModel):
 ###
 # Mutations
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def create_rule(payload: RulePayload) -> bool:
     payload_cartridge = format_cartridge_id_from_bytes(payload.cartridge_id)
 
@@ -243,7 +221,7 @@ def create_rule(payload: RulePayload) -> bool:
         add_output(msg)
         return False
 
-    LOGGER.info(f"Running cartridge test")
+    LOGGER.info("Running cartridge test")
     try:
         # run cartridge to test args, incard and get outcard
         test_replay_file = open(CoreSettings().test_tape_path,'rb')
@@ -275,7 +253,7 @@ def create_rule(payload: RulePayload) -> bool:
     # create_rule_event = RuleCreated(
     #     rule_id = rule_id,
     #     created_by = metadata.msg_sender,
-    #     created_at = metadata.timestamp
+    #     created_at = metadata.block_timestamp
     # )
     # emit_event(create_rule_event,tags=['rule','create_rule',format_rule_id_from_bytes(rule_id)])
     tags = ['rule',rule.id,payload_cartridge]
@@ -284,7 +262,7 @@ def create_rule(payload: RulePayload) -> bool:
 
     return True
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def deactivate_rule(payload: DeactivateRulePayload) -> bool:
     metadata = get_metadata()
 
@@ -297,40 +275,33 @@ def deactivate_rule(payload: DeactivateRulePayload) -> bool:
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
+
     if rule.deactivated:
         msg = f"rule {payload_rule} already deactivated"
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
+
     if rule.name == CoreSettings().default_rule_name:
         msg = f"Can't deactivate default rule {payload_rule}"
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
-    if rule.created_by != metadata['msg_sender'].lower() and \
-            metadata['msg_sender'].lower() != CoreSettings().operator_address.lower():
-        msg = f"Sender not allowed"
+
+    if rule.created_by != metadata.msg_sender.lower() and \
+            metadata.msg_sender.lower() != CoreSettings().operator_address.lower():
+        msg = "Sender not allowed"
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
+
     rule.deactivated = True
 
     return True
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def verify(payload: VerifyPayload) -> bool:
     metadata = get_metadata()
-
-    # Check internal verification lock
-    if CoreSettings().internal_verify_lock:
-        msg = f"Internal verification locked"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
 
     payload_rule = format_rule_id_from_bytes(payload.rule_id)
     # payload_cartridge = format_cartridge_id_from_bytes(payload.cartridge_id)
@@ -348,43 +319,43 @@ def verify(payload: VerifyPayload) -> bool:
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
+
     # if rule.cartridge_id != payload_cartridge:
     #     msg = f"rule and payload have different cartridge {rule.cartridge_id} != {payload_cartridge}"
     #     LOGGER.error(msg)
     #     add_output(msg)
     #     return False
-    
+
     if not rule.allow_tapes and len(payload.tapes) > 0:
         msg = f"rule {payload_rule} doesn't allow tapes"
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
+
     if not rule.allow_in_card and len(payload.in_card) > 0:
         msg = f"rule {payload_rule} doesn't allow in cards"
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
-    if rule.start is not None and rule.start > 0 and rule.start > metadata.timestamp:
-        msg = f"timestamp earlier than rule start"
+
+    if rule.start is not None and rule.start > 0 and rule.start > metadata.block_timestamp:
+        msg = "timestamp earlier than rule start"
         LOGGER.error(msg)
         add_output(msg)
         return False
 
-    if rule.end is not None and rule.end > 0 and rule.end < metadata.timestamp:
-        msg = f"timestamp later than rule end"
+    if rule.end is not None and rule.end > 0 and rule.end < metadata.block_timestamp:
+        msg = "timestamp later than rule end"
         LOGGER.error(msg)
         add_output(msg)
         return False
 
     tape_id = generate_tape_id(hex2bytes(payload_rule),payload.tape)
-    
+
     # if TapeHash.check_duplicate(tape_id):
     tape = Tape.get(lambda r: r.id == tape_id)
     if tape is not None:
-        msg = f"Tape already submitted"
+        msg = "Tape already submitted"
         LOGGER.error(msg)
         add_output(msg)
         return False
@@ -392,13 +363,13 @@ def verify(payload: VerifyPayload) -> bool:
     cartridge = Cartridge.get(lambda c: c.active and c.unlocked and c.id == rule.cartridge_id)
 
     if cartridge is None:
-        msg = f"Cartridge not found"
+        msg = "Cartridge not found"
         LOGGER.error(msg)
         add_output(msg)
         return False
 
     # process tape
-    LOGGER.info(f"Verifying tape...")
+    LOGGER.info("Verifying tape...")
     try:
         entropy = generate_entropy(metadata.msg_sender, rule.id)
 
@@ -430,7 +401,7 @@ def verify(payload: VerifyPayload) -> bool:
         return False
 
     # compare outcard
-    tape_outcard_hash = payload.outcard_hash 
+    tape_outcard_hash = payload.outcard_hash
     if tape_outcard_hash == b'\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0':
         tape_outcard_hash = outhash
 
@@ -448,12 +419,12 @@ def verify(payload: VerifyPayload) -> bool:
     LOGGER.debug(f"Valid Outcard Hash: {outcard_valid}")
 
     if not outcard_valid:
-        msg = f"Out card hash doesn't match"
+        msg = "Out card hash doesn't match"
         LOGGER.error(msg)
         add_output(msg)
         return False
 
-    score = 0
+    score = None
     if rule.score_function is not None and len(rule.score_function) > 0 and outcard_format == b"JSON":
         try:
             outcard_json = json.loads(outcard_print)
@@ -477,7 +448,7 @@ def verify(payload: VerifyPayload) -> bool:
         LOGGER.debug(f"Valid Score: {score_valid}")
 
         if not score_valid:
-            msg = f"Score doesn't match"
+            msg = "Score doesn't match"
             LOGGER.error(msg)
             add_output(msg)
             return False
@@ -498,8 +469,8 @@ def verify(payload: VerifyPayload) -> bool:
         cartridge_input_index = cartridge.input_index,
         cartridge_user_address = cartridge.user_address,
         user_address = metadata.msg_sender,
-        timestamp = metadata.timestamp,
-        score = score,
+        timestamp = metadata.block_timestamp,
+        score = score or 0,
         rule_id = hex2bytes(rule.id),
         rule_input_index = rule.input_index,
         tape_id = hex2bytes(tape_id),
@@ -511,7 +482,7 @@ def verify(payload: VerifyPayload) -> bool:
     common_tags.extend(list(rule.tags.name.distinct().keys()))
     index_tags = ["tape"]
     index_tags.extend(common_tags)
-    index_input(tags=index_tags,value=metadata.timestamp)
+    index_input(tags=index_tags,value=metadata.block_timestamp)
     event_tags = ["score"]
     event_tags.extend(common_tags)
     emit_event(out_ev,tags=event_tags,value=score)
@@ -524,7 +495,7 @@ def verify(payload: VerifyPayload) -> bool:
         cartridge_id = cartridge.id,
         rule_id = rule.id,
         user_address = metadata.msg_sender,
-        timestamp = metadata.timestamp,
+        timestamp = metadata.block_timestamp,
         input_index = metadata.input_index,
         verified = True,
         score = score,
@@ -541,232 +512,29 @@ def verify(payload: VerifyPayload) -> bool:
 
     return True
 
-@mutation(proxy=CoreSettings().proxy_address)
-def register_external_verification(payload: VerifyPayload) -> bool:
-    metadata = get_metadata()
-    payload_rule = format_rule_id_from_bytes(payload.rule_id)
-    # payload_cartridge = format_cartridge_id_from_bytes(payload.cartridge_id)
-    
-    # get Rule
-    rule = Rule.get(lambda r: r.id == payload_rule)
-    if rule is None:
-        msg = f"rule {payload_rule} doesn't exist"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-
-    if rule.deactivated:
-        msg = f"rule {payload_rule} deactivated"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-    
-    # if rule.cartridge_id != payload_cartridge:
-    #     msg = f"rule and payload have different cartridge {rule.cartridge_id} != {payload_cartridge}"
-    #     LOGGER.error(msg)
-    #     add_output(msg)
-    #     return False
-    
-    if not rule.allow_tapes and len(payload.tapes) > 0:
-        msg = f"rule {payload_rule} doesn't allow tapes"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-    
-    if not rule.allow_in_card and len(payload.in_card) > 0:
-        msg = f"rule {payload_rule} doesn't allow in cards"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-
-    if rule.start is not None and rule.start > 0 and rule.start > metadata.timestamp:
-        msg = f"timestamp earlier than rule start"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-
-    if rule.end is not None and rule.end > 0 and rule.end < metadata.timestamp:
-        msg = f"timestamp later than rule end"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-
-    tape_id = generate_tape_id(hex2bytes(payload_rule),payload.tape)
-    
-    # if TapeHash.check_duplicate(tape_id):
-    tape = Tape.get(lambda r: r.id == tape_id)
-    if tape is not None:
-        msg = f"Tape already submitted"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-
-    cartridge = Cartridge.get(lambda c: c.active and c.unlocked and c.id == rule.cartridge_id)
-
-    if cartridge is None:
-        msg = f"Cartridge not found"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-
-    LOGGER.info(f"Received new tape {tape_id} in input {metadata.input_index}")
-    tags = ["tape",rule.cartridge_id,payload_rule,tape_id]
-    tags.extend(list(rule.tags.name.distinct().keys()))
-    index_input(tags=tags,value=metadata.timestamp)
-    # TapeHash.add(tape_id)#(rule.cartridge_id,rule.id,tape_id)
-
-    t = Tape(
-        id = tape_id,
-        cartridge_id = cartridge.id,
-        rule_id = rule.id,
-        user_address = metadata.msg_sender,
-        timestamp = metadata.timestamp,
-        input_index = metadata.input_index,
-        verified = False,
-    )
-    if rule.allow_tapes and len(payload.tapes) > 0:
-        t.tapes = [t.hex() for t in payload.tapes]
-    if rule.allow_in_card and len(payload.in_card) > 0:
-        t.in_card = payload.in_card
-    if rule.save_tapes:
-        t.data = payload.tape
-    # TapeHash.set_verified(tape_id,outcard_to_save)
-
-    return True
-
-@mutation(proxy=CoreSettings().proxy_address)
-def external_verification(payload: ExternalVerificationPayload) -> bool:
-    metadata = get_metadata()
-    # only operator
-    if metadata.msg_sender.lower() != CoreSettings().operator_address:
-        msg = f"sender not allowed"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-
-    payload_lens = [
-        len(payload.tape_ids),
-        len(payload.scores),
-        len(payload.error_codes),
-        len(payload.outcards),
-    ]
-    if len(set(payload_lens)) != 1:
-        msg = f"payload have distinct sizes"
-        LOGGER.error(msg)
-        add_output(msg)
-        return False
-    
-    LOGGER.info(f"Received batch of tape verifications")
-    for ind in range(len(payload.tape_ids)):
-
-        tape_id = format_tape_id_from_bytes(payload.tape_ids[ind])
-
-        # if not TapeHash.check_duplicate(tape_id):
-        tape = Tape.get(lambda r: r.id == tape_id)
-        if tape is None:
-            msg = f"Tape not submitted"
-            LOGGER.warning(msg)
-            # add_output(msg)
-            # return False
-            continue
-
-        # if TapeHash.check_verified(tape_id):
-        if tape.verified:
-            msg = f"Tape already verified"
-            LOGGER.warning(msg)
-            # add_output(msg)
-            # return False
-            continue
-
-        # get Rule
-        rule = Rule.get(lambda r: r.id == tape.rule_id)
-        if rule is None:
-            msg = f"rule {tape.rule_id} doesn't exist"
-            LOGGER.warning(msg)
-            # add_output(msg)
-            # return False
-            continue
-        
-        if rule.deactivated:
-            msg = f"rule {tape.rule_id} deactivated"
-            LOGGER.warning(msg)
-            # add_output(msg)
-            # return False
-            continue
-        
-        cartridge = Cartridge.get(lambda c: c.active and c.unlocked and c.id == rule.cartridge_id)
-
-        if cartridge is None:
-            msg = f"Cartridge not found"
-            LOGGER.error(msg)
-            # add_output(msg)
-            # return False
-            continue
-
-        all_tapes = []
-        if cartridge.tapes is not None and len(cartridge.tapes) > 0:
-            all_tapes.extend([hex2bytes(t) for t in cartridge.tapes])
-        if rule.tapes is not None and len(rule.tapes) > 0:
-            all_tapes.extend([hex2bytes(t) for t in rule.tapes])
-        if rule.allow_tapes and len(tape.tapes) > 0:
-            all_tapes.extend([hex2bytes(t) for t in tape.tapes])
-
-        out_ev = VerificationOutput(
-            version=get_version(),
-            cartridge_id = hex2bytes(cartridge.id),
-            cartridge_input_index = cartridge.input_index,
-            cartridge_user_address = cartridge.user_address,
-            user_address = tape.user_address,
-            timestamp = tape.timestamp,
-            score = payload.scores[ind],
-            rule_id = hex2bytes(rule.id),
-            rule_input_index = rule.input_index,
-            tape_id = hex2bytes(tape_id),
-            tape_input_index = tape.input_index,
-            error_code = payload.error_codes[ind],
-            tapes=all_tapes
-        )
-
-        LOGGER.info(f"Sending tape verification output")
-
-        tags = ['score',cartridge.id,rule.id,tape.id]
-        tags.extend(list(rule.tags.name.distinct().keys()))
-        emit_event(out_ev,tags=tags,value=payload.scores[ind])
-
-        # tape_to_save = payload.outcards[ind] if rule.save_tapes else True
-
-        # TapeHash.set_verified(tape_id,tape_to_save)
-        
-        tape.verified = True
-        tape.score = payload.scores[ind]
-        if rule.save_out_cards and payload.error_codes[ind] == ErrorCode.NONE.value:
-            tape.out_card = payload.outcards[ind]
-
-    return True
-
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def award_winners(payload: AwardWinnerTapesPayload) -> bool:
     metadata = get_metadata()
     # only operator
     if metadata.msg_sender.lower() != CoreSettings().operator_address:
-        msg = f"sender not allowed"
+        msg = "sender not allowed"
         LOGGER.error(msg)
         add_output(msg)
         return False
 
     if payload.tapes_to_award < 1:
-        msg = f"Should award at least one tape"
+        msg = "Should award at least one tape"
         LOGGER.error(msg)
         add_output(msg)
         return False
 
     payload_rule = format_rule_id_from_bytes(payload.rule_id)
     # payload_cartridge = format_cartridge_id_from_bytes(payload.cartridge_id)
-    
+
     # get Rule
-    rule = Rule.get(lambda r: r.id == payload_rule)
+    rule = Rule.get(lambda r: r.id == payload_rule and not r.awarded)
     if rule is None:
-        msg = f"rule {payload_rule} doesn't exist"
+        msg = f"rule {payload_rule} doesn't exist or was already awarded"
         LOGGER.error(msg)
         add_output(msg)
         return False
@@ -774,7 +542,7 @@ def award_winners(payload: AwardWinnerTapesPayload) -> bool:
     cartridge = Cartridge.get(lambda c: c.id == rule.cartridge_id)
 
     if cartridge is None:
-        msg = f"Cartridge not found"
+        msg = "Cartridge not found"
         LOGGER.error(msg)
         add_output(msg)
         return False
@@ -786,34 +554,39 @@ def award_winners(payload: AwardWinnerTapesPayload) -> bool:
         return False
 
     if rule.start is None or rule.end is None:
-        msg = f"rule has no start/end"
+        msg = "rule has no start/end"
         LOGGER.error(msg)
         add_output(msg)
         return False
 
-    if metadata.timestamp < rule.start or metadata.timestamp < rule.end:
-        msg = f"rule submission period not ended yet"
+    if metadata.block_timestamp < rule.start or metadata.block_timestamp < rule.end:
+        msg = "rule submission period not ended yet"
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
+
     total_tapes = Tape.select(lambda r: r.rule_id == rule.id).count()
-    tapes_verified_query = Tape.select(lambda r: r.rule_id == rule.id and 
+    tapes_verified_query = Tape.select(lambda r: r.rule_id == rule.id and
                                        r.verified and r.score is not None)
     total_verified = tapes_verified_query.count()
 
     if total_verified < total_tapes:
-        msg = f"not all tapes verified"
+        msg = "not all tapes verified"
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
+
     tapes_to_award = tapes_verified_query.order_by(helpers.desc(Tape.score)).page(1,payload.tapes_to_award)
 
+    rule.awarded = True
+
+    user_addresses = []
     rank = 1
     tags = ['award',rule.cartridge_id,payload_rule]
     for tape in tapes_to_award:
         if tape.rank is not None: continue
+        if payload.avoid_duplicates and tape.user_address in user_addresses: continue
+        user_addresses.append(tape.user_address)
         e = TapeAward(
             version=get_version(),
             cartridge_id = hex2bytes(cartridge.id),
@@ -836,7 +609,7 @@ def award_winners(payload: AwardWinnerTapesPayload) -> bool:
 
     return True
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def clean_tapes(payload: CleanTapesPayload) -> bool:
     metadata = get_metadata()
     # only operator
@@ -847,7 +620,7 @@ def clean_tapes(payload: CleanTapesPayload) -> bool:
         return False
 
     payload_rule = format_rule_id_from_bytes(payload.rule_id)
-    
+
     # get Rule
     rule = Rule.get(lambda r: r.id == payload_rule)
     if rule is None:
@@ -855,7 +628,7 @@ def clean_tapes(payload: CleanTapesPayload) -> bool:
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
+
     tapes = Tape.select(lambda r: r.rule_id == rule.id)
     for tape in tapes:
         if tape.out_card and len(tape.out_card) > 0:
@@ -876,7 +649,7 @@ def clean_tapes(payload: CleanTapesPayload) -> bool:
 @query()
 def rules(payload: GetRulesPayload) -> bool:
     rules_query = Rule.select()
-    
+
     if payload.enable_deactivated is None or not payload.enable_deactivated:
         rules_query = rules_query.filter(lambda c: not c.deactivated)
     if payload.id is not None:
@@ -930,7 +703,7 @@ def rules(payload: GetRulesPayload) -> bool:
             rules = rules_query.page(payload.page)
     else:
         rules = rules_query
-    
+
     full = payload.full is not None and payload.full
     dict_list_result = []
     for r in rules:
@@ -942,9 +715,9 @@ def rules(payload: GetRulesPayload) -> bool:
         dict_list_result.append(dict_rule)
 
     LOGGER.info(f"Returning {len(dict_list_result)} of {total} rules")
-    
+
     out = RulesOutput.parse_obj({'data':dict_list_result,'total':total,'page':page})
-    
+
     add_output(out)
 
     return True
@@ -966,7 +739,7 @@ def rule_tags(payload: GetRuleTagsPayload) -> bool:
 @query()
 def tapes(payload: GetTapesPayload) -> bool:
     tapes_query = Tape.select()
-    
+
     if payload.id is not None:
         tapes_query = tapes_query.filter(lambda r: payload.id == r.id)
     if payload.ids is not None:
@@ -1021,7 +794,7 @@ def tapes(payload: GetTapesPayload) -> bool:
             tapes = tapes_query.page(payload.page)
     else:
         tapes = tapes_query
-    
+
     full = payload.full is not None and payload.full
     dict_list_result = []
     for r in tapes:
@@ -1029,9 +802,9 @@ def tapes(payload: GetTapesPayload) -> bool:
         dict_list_result.append(dict_tapes)
 
     LOGGER.info(f"Returning {len(dict_list_result)} of {total} tapes")
-    
+
     out = TapesOutput.parse_obj({'data':dict_list_result,'total':total,'page':page})
-    
+
     add_output(out)
 
     return True

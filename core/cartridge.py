@@ -13,8 +13,8 @@ from cartesapp.input import query, mutation
 from cartesapp.output import event, output, add_output, emit_event, index_input
 from cartesapp.utils import hex2bytes
 
-from .model import Cartridge, CartridgeTag, CartridgeAuthor, InfoCartridge, Bytes32List, BoolList, \
-    create_cartridge, delete_cartridge, change_cartridge_user_address, StringList, unlock_and_test_cartridge, create_and_unlock_cartridge
+from .model import Cartridge, CartridgeTag, CartridgeAuthor, InfoCartridge, \
+    create_cartridge, delete_cartridge, change_cartridge_user_address, unlock_and_test_cartridge, create_and_unlock_cartridge
 from .core_settings import CoreSettings, get_cartridges_path, get_version, format_cartridge_id_from_bytes
 
 LOGGER = logging.getLogger(__name__)
@@ -26,8 +26,8 @@ class InsertCartridgePayload(BaseModel):
     data: Bytes
 
 class SetUnlockedCartridgePayload(BaseModel):
-    ids: Bytes32List
-    unlocks: BoolList
+    ids: List[Bytes32]
+    unlocks: List[Bool]
 
 class RemoveCartridgePayload(BaseModel):
     id: Bytes32
@@ -85,7 +85,7 @@ class CartridgeInfo(BaseModel):
     name: String
     user_address: String
     input_index: Optional[UInt]
-    authors: Optional[StringList]
+    authors: Optional[List[String]]
     info: Optional[InfoCartridge]
     original_info: Optional[InfoCartridge]
     created_at: UInt
@@ -96,9 +96,9 @@ class CartridgeInfo(BaseModel):
     primary: Optional[Bool]
     primary_id: Optional[String]
     last_version: Optional[String]
-    versions: Optional[StringList]
-    tapes: Optional[StringList]
-    tags:  Optional[StringList]
+    versions: Optional[List[String]]
+    tapes: Optional[List[String]]
+    tags:  Optional[List[String]]
 
 @output()
 class CartridgesOutput(BaseModel):
@@ -117,10 +117,10 @@ class CartridgeAuthorsOutput(BaseModel):
 ###
 # Mutations
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def insert_cartridge(payload: InsertCartridgePayload) -> bool:
     metadata = get_metadata()
-    
+
     LOGGER.info("Saving cartridge...")
     try:
         cartridge = create_cartridge(payload.data,**metadata.dict())
@@ -136,7 +136,7 @@ def insert_cartridge(payload: InsertCartridgePayload) -> bool:
     #     cartridge_id = hex2bytes(cartridge.id),
     #     cartridge_user_address = metadata.msg_sender,
     #     cartridge_input_index = metadata.input_index,
-    #     timestamp = metadata.timestamp
+    #     timestamp = metadata.block_timestamp
     # )
     tags = ['cartridge','cartridge_inserted',cartridge.id]
     index_input(tags=tags)
@@ -144,12 +144,12 @@ def insert_cartridge(payload: InsertCartridgePayload) -> bool:
 
     return True
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def set_unlock_cartridge(payload: SetUnlockedCartridgePayload) -> bool:
     metadata = get_metadata()
 
     if metadata.msg_sender.lower() != CoreSettings().operator_address:
-        msg = f"sender not allowed"
+        msg = "sender not allowed"
         LOGGER.error(msg)
         add_output(msg)
         return False
@@ -159,17 +159,17 @@ def set_unlock_cartridge(payload: SetUnlockedCartridgePayload) -> bool:
         len(payload.unlocks),
     ]
     if len(set(payload_lens)) != 1:
-        msg = f"payload have distinct sizes"
+        msg = "payload have distinct sizes"
         LOGGER.error(msg)
         add_output(msg)
         return False
-    
-    LOGGER.info(f"Received batch of cartridge unlocks")
+
+    LOGGER.info("Received batch of cartridge unlocks")
     for ind in range(len(payload.ids)):
         payload_id = format_cartridge_id_from_bytes(payload.ids[ind])
 
         LOGGER.info("Unlocking cartridge...")
-        
+
         try:
             if payload.unlocks[ind]:
                 cartridge = unlock_and_test_cartridge(payload_id,**metadata.dict())
@@ -208,13 +208,13 @@ def set_unlock_cartridge(payload: SetUnlockedCartridgePayload) -> bool:
 
     return True
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def insert_and_unlock_cartridge(payload: InsertCartridgePayload) -> bool:
     metadata = get_metadata()
-    
+
     # Check internal verification lock
     if CoreSettings().cartridge_moderation_lock:
-        msg = f"Direct cartridge insertion locked"
+        msg = "Direct cartridge insertion locked"
         LOGGER.error(msg)
         add_output(msg)
         return False
@@ -234,7 +234,7 @@ def insert_and_unlock_cartridge(payload: InsertCartridgePayload) -> bool:
         cartridge_id = hex2bytes(cartridge.id),
         cartridge_user_address = metadata.msg_sender,
         cartridge_input_index = metadata.input_index,
-        timestamp = metadata.timestamp
+        timestamp = metadata.block_timestamp
     )
     tags = ['cartridge','cartridge_inserted',cartridge.id]
     index_input(tags=tags)
@@ -242,7 +242,7 @@ def insert_and_unlock_cartridge(payload: InsertCartridgePayload) -> bool:
 
     return True
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def remove_cartridge(payload: RemoveCartridgePayload) -> bool:
     metadata = get_metadata()
     payload_id = format_cartridge_id_from_bytes(payload.id)
@@ -261,7 +261,7 @@ def remove_cartridge(payload: RemoveCartridgePayload) -> bool:
         cartridge_data = cart[1]
         cartridge_event = CartridgeRemoved(
             cartridge_id = cartridge.id,
-            timestamp = metadata.timestamp
+            timestamp = metadata.block_timestamp
         )
         emit_event(cartridge_event,tags=['cartridge','cartridge_removed',cartridge.id])
         add_output(
@@ -271,7 +271,7 @@ def remove_cartridge(payload: RemoveCartridgePayload) -> bool:
 
     return True
 
-@mutation(proxy=CoreSettings().proxy_address)
+@mutation()
 def transfer_cartridge(payload: TransferCartridgePayload) -> bool:
     metadata = get_metadata()
     payload_id = format_cartridge_id_from_bytes(payload.id)
@@ -290,7 +290,7 @@ def transfer_cartridge(payload: TransferCartridgePayload) -> bool:
         cartridge_id = payload.id,
         cartridge_user_address = payload.new_user_address,
         cartridge_input_index = cartridge.input_index,
-        timestamp = metadata.timestamp
+        timestamp = metadata.block_timestamp
     )
     emit_event(cartridge_event,tags=['cartridge','cartridge_transfered',payload_id])
 
@@ -364,7 +364,7 @@ def cartridges(payload: CartridgesPayload) -> bool:
     # if payload.tags is not None and len(payload.tags) > 0:
     #     for tag in payload.tags:
     #         cartridges_query = cartridges_query.filter(lambda c: tag in c.info['tags'])
-    
+
     if payload.ids is not None and len(payload.ids) > 0:
         cartridges_query = cartridges_query.filter(lambda c: c.id in payload.ids)
 
@@ -415,9 +415,9 @@ def cartridges(payload: CartridgesPayload) -> bool:
         dict_list_result.append(cartridge_dict)
 
     LOGGER.info(f"Returning {len(dict_list_result)} of {total} cartridges")
-    
+
     out = CartridgesOutput.parse_obj({'data':dict_list_result,'total':total,'page':page})
-    
+
     add_output(out)
 
     return True

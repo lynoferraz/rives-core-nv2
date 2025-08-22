@@ -1,20 +1,19 @@
 import os
 from pydantic import BaseModel
 import logging
-from typing import Optional, List, Annotated
+from typing import Optional, List
 import json
 from py_expression_eval import Parser
-import pickle
 import traceback
 
-from cartesi.abi import String, Bytes, Bytes32, UInt, Bool, ABIType
+from cartesi.abi import String, Bytes, Bytes32, UInt, Bool
 
-from cartesapp.storage import Entity, helpers, Storage, seed
+from cartesapp.storage import Entity, helpers, seed
 from cartesapp.utils import hex2bytes, str2bytes, bytes2str
 
 from .riv import riv_get_cartridge_info, riv_get_cover, verify_log
-from .core_settings import CoreSettings, generate_cartridge_id, get_cartridges_path, is_inside_cm, \
-    get_cartridge_tapes_filename, generate_rule_id, generate_rule_parameters_tag, \
+from .core_settings import CoreSettings, generate_cartridge_id, get_cartridges_path, \
+    generate_rule_id, generate_rule_parameters_tag, \
     format_cartridge_id_from_bytes, format_tape_id_from_bytes
 
 LOGGER = logging.getLogger(__name__)
@@ -22,15 +21,6 @@ LOGGER = logging.getLogger(__name__)
 
 ###
 # Model
-
-UInt256List = Annotated[List[int], ABIType('uint256[]')]
-Int256List = Annotated[List[int], ABIType('int256[]')]
-Bytes32List = Annotated[List[bytes], ABIType('bytes32[]')]
-StringList = Annotated[List[str], ABIType('string[]')]
-AddressList = Annotated[List[str], ABIType('address[]')]
-BytesList = Annotated[List[bytes], ABIType('bytes[]')]
-Bytes32ListList = Annotated[List[bytes], ABIType('bytes32[][]')]
-BoolList = Annotated[List[bool], ABIType('bool[]')]
 
 # TODO: TypeError: unhashable type: 'ABIType' allow python cartesi types
 class Cartridge(Entity):
@@ -81,6 +71,7 @@ class Rule(Entity):
     save_out_cards  = helpers.Optional(bool, lazy=True)
     deactivated     = helpers.Optional(bool)
     tags            = helpers.Set("RuleTag")
+    awarded         = helpers.Optional(bool)
 
 class RuleTag(Entity):
     rules           = helpers.Set(Rule)
@@ -112,8 +103,8 @@ class RuleData(BaseModel):
     score_function:     String
     start:              UInt
     end:                UInt
-    tags:               StringList
-    tapes:              Bytes32List
+    tags:               List[String]
+    tapes:              List[Bytes32]
     allow_tapes:        Bool
     allow_in_card:      Bool
     save_tapes:         Bool
@@ -176,7 +167,7 @@ class InfoCartridge(BaseModel):
 #         cartridge_tapes = cls.get_cartridge_tapes()
 #         return tape_hash in cartridge_tapes \
 #             and cartridge_tapes[tape_hash] is not None
-    
+
 #     @classmethod
 #     def set_verified(cls,tape_hash, out_card):
 #         cartridge_tapes = cls.get_cartridge_tapes()
@@ -187,7 +178,7 @@ class InfoCartridge(BaseModel):
 #     def get_outcard(cls, tape_hash):
 #         cartridge_tapes = cls.get_cartridge_tapes()
 #         return cartridge_tapes.get(tape_hash)
-    
+
 ###
 # Seeds
 
@@ -203,7 +194,6 @@ def initialize_data():
                 cartridge_ids[cartridge] = generate_cartridge_id(cartridge_example_data)
                 cartridge_data[cartridge] = cartridge_example_data
                 create_and_unlock_cartridge(cartridge_example_data,msg_sender=CoreSettings().operator_address)
-                if is_inside_cm(): os.remove(cartridge_path)
         except Exception as e:
             LOGGER.warning(e)
             traceback.print_exc()
@@ -231,14 +221,14 @@ def initialize_data():
 
                 cartridge = Cartridge.get(lambda r: r.id == cartridge_ids[genesis_rule_cartridge])
                 if cartridge is None:
-                    raise Exception(f"Couldn't find cartridge")
+                    raise Exception("Couldn't find cartridge")
 
                 rule_id = generate_rule_id(
                     hex2bytes(cartridge.primary_id or cartridge.id),
                     hex2bytes(cartridge.id),
                     str2bytes(rule_conf.name))
                 if helpers.count(r for r in Rule if r.id == rule_id) > 0:
-                    raise Exception(f"Rule already exists")
+                    raise Exception("Rule already exists")
                 test_replay_file = open(CoreSettings().test_tape_path,'rb')
                 test_replay = test_replay_file.read()
                 test_replay_file.close()
@@ -282,18 +272,18 @@ def create_default_rule(cartridge: Cartridge, outcard_raw: bytes, **metadata):
         hex2bytes(cartridge.id),
         str2bytes(rule_conf.name))
     return insert_rule_db(rule_id, rule_conf,**metadata)
-    
+
 def insert_rule(rule_id:str, rule_conf: RuleData,outcard_raw: bytes,**metadata):
-    # str2bytes(metadata.msg_sender) + metadata.timestamp.to_bytes(32, byteorder='big')
+    # str2bytes(metadata.msg_sender) + metadata.block_timestamp.to_bytes(32, byteorder='big')
 
     if rule_conf.start > 0 and rule_conf.end > 0 and rule_conf.start > rule_conf.end:
-        raise Exception(f"Inconsistent start and end time")
+        raise Exception("Inconsistent start and end time")
     # process outcard
     # function_log = "no function"
     if rule_conf.score_function is not None and len(rule_conf.score_function) > 0:
         outcard_format = outcard_raw[:4]
         if outcard_format != b"JSON":
-            raise Exception(f"Outcard format is not json")
+            raise Exception("Outcard format is not json")
 
         outcard_str = bytes2str(outcard_raw[4:])
 
@@ -308,7 +298,7 @@ def insert_rule(rule_id:str, rule_conf: RuleData,outcard_raw: bytes,**metadata):
 
         try:
             parser = Parser()
-            score = parser.parse(rule_conf.score_function).evaluate(outcard_json)
+            parser.parse(rule_conf.score_function).evaluate(outcard_json)
         except Exception as e:
             raise Exception(f"Couldn't parse score: {e}")
         # function_log = f"function {rule_conf.score_function}"
@@ -318,12 +308,12 @@ def insert_rule(rule_id:str, rule_conf: RuleData,outcard_raw: bytes,**metadata):
     rule_conf.tapes = [t.hex() for t in rule_conf.tapes]
 
     return insert_rule_db(rule_id,rule_conf,**metadata)
-    
+
 def insert_rule_db(rule_id:str, rule_conf: RuleData,**metadata):
 
     if helpers.count(r for r in Rule if r.id == rule_id) > 0:
-        raise Exception(f"Rule already exists")
-    
+        raise Exception("Rule already exists")
+
     LOGGER.info(f"Creating rule {rule_conf.name} (id={rule_id})")
 
     user_address = metadata.get('msg_sender')
@@ -369,17 +359,17 @@ def create_and_unlock_cartridge(cartridge_data, **metadata):
 
 def create_cartridge(cartridge_data, **metadata):
     cartridge_id = generate_cartridge_id(cartridge_data)
-    
+
     if metadata.get('timestamp') is None: metadata['timestamp'] = 0
 
     user_address = metadata.get('msg_sender')
     if user_address is not None: user_address = user_address.lower()
 
     if helpers.count(c for c in Cartridge if c.id == CoreSettings().max_locked_cartridges) > 0:
-        raise Exception(f"Max locked cartridge reached")
+        raise Exception("Max locked cartridge reached")
 
     if helpers.count(c for c in Cartridge if c.id == cartridge_id) > 0:
-        raise Exception(f"Cartridge hash already exists")
+        raise Exception("Cartridge hash already exists")
 
     cartridges_path = get_cartridges_path()
     if not os.path.exists(cartridges_path):
@@ -400,38 +390,38 @@ def create_cartridge(cartridge_data, **metadata):
         updated_at = metadata.get('timestamp') or 0,
         active = True
     )
-    
+
     return cartridge
 
 def unlock_and_test_cartridge(cartridge_id,**metadata):
     cartridge = Cartridge.get(lambda c: c.id == cartridge_id)
     if cartridge is None:
-        raise Exception(f"Cartridge doesn't exist")
+        raise Exception("Cartridge doesn't exist")
 
     if cartridge.unlocked:
         LOGGER.info(f"Cartridge (id={cartridge_id}) already unlocked")
         return
 
     if metadata['msg_sender'].lower() != CoreSettings().operator_address:
-        raise Exception(f"Sender not allowed")
-    
+        raise Exception("Sender not allowed")
+
     cartridges_path = get_cartridges_path()
     cartridge_filepath = f"{cartridges_path}/{cartridge_id}"
 
     cartridge_info = riv_get_cartridge_info(cartridge_filepath)
-    
+
     # validate info
     cartridge_info_json = json.loads(cartridge_info)
     InfoCartridge(**cartridge_info_json)
     if cartridge_info_json.get('name') is None:
-        raise Exception(f"Cartridge has no name")
+        raise Exception("Cartridge has no name")
 
     # check if cartridge already exists
     primary_cartridge = Cartridge.get(lambda r: r.name == cartridge_info_json['name'] and r.primary)
     if primary_cartridge is not None:
         # check user
         if cartridge.user_address != primary_cartridge.user_address:
-            raise Exception(f"Primary cartridge and new version with different users")
+            raise Exception("Primary cartridge and new version with different users")
 
     with open(cartridge_filepath,'rb') as cartridge_file:
         cartridge_data = cartridge_file.read()
@@ -516,146 +506,23 @@ def unlock_and_test_cartridge(cartridge_id,**metadata):
     return cartridge
 
 
-
-# def create_cartridge(cartridge_data, **metadata):
-#     data_hash = generate_cartridge_id(cartridge_data)
-    
-#     if metadata.get('timestamp') is None: metadata['timestamp'] = 0
-
-#     user_address = metadata.get('msg_sender')
-#     if user_address is not None: user_address = user_address.lower()
-
-#     if helpers.count(c for c in Cartridge if c.id == data_hash) > 0:
-#         raise Exception(f"Cartridge hash already exists")
-
-#     cartridges_path = get_cartridges_path()
-#     if not os.path.exists(cartridges_path):
-#         os.makedirs(cartridges_path)
-#     cartridge_filepath = f"{cartridges_path}/{data_hash}"
-
-#     with open(cartridge_filepath,'wb') as cartridge_file:
-#         cartridge_file.write(cartridge_data)
-
-#     cartridge_info = riv_get_cartridge_info(cartridge_filepath)
-    
-#     # validate info
-#     cartridge_info_json = json.loads(cartridge_info)
-#     InfoCartridge(**cartridge_info_json)
-
-#     # check if cartridge already exists
-#     cartridge = Cartridge.get(lambda r: r.name == cartridge_info_json['name'] and r.primary)
-#     if cartridge is not None:
-#         # check user
-#         if cartridge.user_address != user_address:
-#             raise Exception(f"Not the same user")
-
-#     # check if cartridge runs
-#     test_replay_file = open(CoreSettings().test_tape_path,'rb')
-#     test_replay = test_replay_file.read()
-#     test_replay_file.close()
-
-#     # parse tapes to incard
-#     incard = b""
-#     if cartridge_info_json.get("tapes") is not None:
-#         incard = format_incard(map(lambda x: format_tape_id_from_bytes(hex2bytes(x)), cartridge_info_json["tapes"]),[b''])
-
-#     verification_output = verify_log(cartridge_data,test_replay,'',incard,get_screenshot=True)
-#     screenshot = verification_output.get("screenshot")
-
-#     cartridge_cover = riv_get_cover(cartridge_filepath)
-#     if cartridge_cover is None or len(cartridge_cover) == 0:
-#         #cartridge_cover = riv_get_cartridge_screenshot(data_hash,0)
-#         cartridge_cover = screenshot
-
-#     LOGGER.info(f"Creating cartridge {cartridge_info_json['name']} (id={data_hash})")
-
-
-#     tapes = []
-#     if cartridge_info_json.get("tapes") is not None:
-#         tapes = cartridge_info_json["tapes"]
-#     authors = []
-#     if cartridge_info_json.get('authors') is not None:
-#         for author_json in cartridge_info_json['authors']:
-#             if author_json.get('name') is not None:
-#                 author = CartridgeAuthor.get(lambda r: r.name == author_json['name'])
-#                 if author is None: author = CartridgeAuthor(name=author_json['name'])
-#                 authors.append(author)
-
-#     if cartridge is None:
-#         cartridge = Cartridge(
-#             id = data_hash,
-#             name = cartridge_info_json['name'],
-#             authors = authors,
-#             user_address = user_address,
-#             created_at = metadata.get('timestamp') or 0,
-#             input_index = metadata.get('input_index') or -1, # genesis input index
-#             updated_at = metadata.get('timestamp') or 0,
-#             info = cartridge_info_json,
-#             original_info = cartridge_info_json,
-#             cover = cartridge_cover,
-#             active = True,
-#             primary = True,
-#             tapes = tapes,
-#             versions = [data_hash],
-#             last_version = data_hash
-#         )
-#         new_cartridge = cartridge
-#     else:
-#         cartridge.authors = authors if cartridge_info_json.get('authors') else cartridge.authors
-#         cartridge.updated_at = metadata.get('timestamp') or 0
-#         cartridge.info = cartridge_info_json
-#         cartridge.cover = cartridge_cover
-#         cartridge.active = True
-#         cartridge.versions.append(data_hash)
-#         cartridge.last_version = data_hash
-
-#         new_cartridge = Cartridge(
-#             id = data_hash,
-#             name = cartridge_info_json['name'],
-#             authors = authors,
-#             user_address = user_address,
-#             created_at = metadata.get('timestamp') or 0,
-#             input_index = metadata.get('input_index') or -1, # genesis input index
-#             updated_at = metadata.get('timestamp') or 0,
-#             info = cartridge_info_json,
-#             active = True,
-#             primary = False,
-#             primary_id = cartridge.id,
-#             tapes = tapes
-#         )
-#     if cartridge_info_json.get("tags") is not None and len(cartridge_info_json['tags']) > 0:
-#         tags = list(cartridge_info_json['tags'])
-#         for tag in tags:
-#             cartridge_tag = CartridgeTag.get(lambda r: r.name == tag)
-#             if cartridge_tag is None:
-#                 cartridge_tag = CartridgeTag(name = tag)
-#             cartridge_tag.cartridges.add(new_cartridge)
-
-#     metadata['input_index'] = -1 # not created by an input
-#     # LOGGER.info(f"{new_cartridge=}")
-
-#     # create default rule with no arguments, incard, score
-#     create_default_rule(new_cartridge, verification_output.get("outcard"), **metadata)
-
-#     return new_cartridge
-
 def delete_cartridge(cartridge_id,**metadata):
     cartridge = Cartridge.get(lambda c: c.id == cartridge_id and c.active)
     if cartridge is None:
-        raise Exception(f"Cartridge doesn't exist")
+        raise Exception("Cartridge doesn't exist")
 
     # if cartridge.user_address != metadata['msg_sender'].lower() and \
     #         metadata['msg_sender'].lower() != CoreSettings().operator_address.lower():
     if metadata['msg_sender'].lower() != CoreSettings().operator_address:
-        raise Exception(f"Sender not allowed")
-    
+        raise Exception("Sender not allowed")
+
     cartridges_deleted = []
     if cartridge.primary:
         primary_cartridge = cartridge
         for c in primary_cartridge.versions:
             if c != cartridge_id:
                 cartridges_deleted.extend(delete_cartridge(c,**metadata))
-    else: 
+    else:
         primary_cartridge = Cartridge.get(lambda c: c.id == cartridge.primary_id and c.active)
 
     if primary_cartridge is not None:
@@ -681,13 +548,13 @@ def delete_cartridge(cartridge_id,**metadata):
 def change_cartridge_user_address(cartridge_id,new_user_address, internal_call=False, **metadata):
     cartridge = Cartridge.get(lambda c: c.id == cartridge_id and c.active and c.unlocked)
     if cartridge is None:
-        raise Exception(f"Cartridge doesn't exist")
+        raise Exception("Cartridge doesn't exist")
 
     if cartridge.user_address != metadata['msg_sender'].lower():
-        raise Exception(f"Sender not allowed")
+        raise Exception("Sender not allowed")
 
     if not internal_call and not cartridge.primary:
-        raise Exception(f"Not primary cartridge")
+        raise Exception("Not primary cartridge")
 
     primary_cartridge = cartridge
     for c in primary_cartridge.versions:
@@ -703,7 +570,7 @@ def format_incard(tape_ids: List[str],incards: List[bytes]) -> bytes:
         if len(incard) > 0: incard_data_list.append(incard)
     incard_data_list.extend(format_tapes_to_byte_list(tape_ids))
     return format_bytes_list_to_incard(incard_data_list)
-    
+
 def format_tapes_to_byte_list(tape_ids: List[str]) -> List[bytes]:
     tapes_data_list = []
     for t in tape_ids:

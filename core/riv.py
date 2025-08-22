@@ -1,16 +1,15 @@
 import subprocess
 import os
-from pathlib import Path
 import tempfile
 import shutil
 
-from .core_settings import CoreSettings, get_cartridges_path, is_inside_cm
+from .core_settings import CoreSettings, is_inside_cm
 
 def riv_get_cartridge_info(cartridge_filepath):
     args = ["sqfscat","-st"]
     args.append(cartridge_filepath)
     args.append("/info.json")
-        
+
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode > 0:
         raise Exception(f"Error getting info: {str(result.stderr)}")
@@ -21,7 +20,7 @@ def riv_get_cover(cartridge_filepath):
     args = ["sqfscat","-no-exit"]
     args.append(cartridge_filepath)
     args.append("/cover.png")
-        
+
     result = subprocess.run(args, capture_output=True)
     if result.returncode > 0:
         raise Exception(f"Error getting cover: {str(result.stderr)}")
@@ -32,7 +31,7 @@ def riv_get_cartridge_riv_version(cartridge_filepath):
     args = ["sqfscat","-st"]
     args.append(cartridge_filepath)
     args.append("/.riv")
-        
+
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode > 0:
         raise Exception(f"Error getting info: {str(result.stderr)}")
@@ -53,7 +52,7 @@ def verify_log(cartridge_data: bytes, log: bytes,riv_args: str,in_card: bytes, e
         # data_cartridge_path = f"{get_cartridges_path()}/{cartridge_id}" # absolute data full cartridge path
         cartridge_path = f"/{CoreSettings().cartridges_path}/run_cartridge" #{cartridge_id}" # relative to rivos full cartridge path
         rivos_cartridge_path = f"{rivos_cartridges_path}/run_cartridge" #{cartridge_id}" # absolute full cartridge path on rivos
-        
+
         if not os.path.exists(rivos_cartridges_path):
             os.makedirs(rivos_cartridges_path)
 
@@ -152,7 +151,7 @@ def verify_log(cartridge_data: bytes, log: bytes,riv_args: str,in_card: bytes, e
 
     log_file.write(log)
     log_file.flush()
-    
+
     if in_card is not None and len(in_card) > 0:
         incard_file.write(in_card)
         incard_file.flush()
@@ -162,7 +161,7 @@ def verify_log(cartridge_data: bytes, log: bytes,riv_args: str,in_card: bytes, e
     absolute_cartridge_path = cartridge_temp.name # os.path.abspath(f"{get_cartridges_path()}/{cartridge_id}")
 
     version = riv_get_cartridge_riv_version(absolute_cartridge_path)
-    
+
     rivemu_path = f"{CoreSettings().rivemu_path}-{version}"
     if not os.path.isabs(rivemu_path):
         rivemu_path = f"{os.getcwd()}/{rivemu_path}"
@@ -175,17 +174,17 @@ def verify_log(cartridge_data: bytes, log: bytes,riv_args: str,in_card: bytes, e
     run_args.append(rivemu_path)
     run_args.append(f"-cartridge={absolute_cartridge_path}")
     run_args.append(f"-verify={log_temp.name}")
-    run_args.append(f"-quiet")
+    run_args.append("-quiet")
     run_args.append(f"-save-outcard={outcard_temp.name}")
     run_args.append(f"-save-outhash={outhash_temp.name}")
     if get_outhist:
         run_args.append(f"-save-outhist={outhist_temp.name}")
-    run_args.append(f"-no-window")
+    run_args.append("-no-window")
     if get_screenshot:
         run_args.append(f"-save-screenshot={screenshot_temp.name}")
     else:
-        run_args.append(f"-no-yield")
-    run_args.append(f"-no-audio")
+        run_args.append("-no-yield")
+    run_args.append("-no-audio")
     if in_card is not None and len(in_card):
         run_args.append(f"-load-incard={incard_temp.name}")
     if frame is not None:
@@ -233,11 +232,11 @@ def install_riv_version(rivos_data: bytes):
         result = subprocess.run(["unsquashfs","-d",rivos_version_path,rivos_sqfs_temp.name])
         if result.returncode != 0:
             raise Exception(f"Error unsquashfsing: {str(result)}")
-        
+
         result = subprocess.run(["sh",f"{rivos_version_path}/install.sh"])
         if result.returncode != 0:
             raise Exception(f"Error installing new version: {str(result)}")
-        
+
         # rivos_versions=os.listdir(rivos_version_path)
         # for rivos_version in rivos_versions:
         #     shutil.copy2(os.path.join(rivos_version_path,rivos_version), "/")

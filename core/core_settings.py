@@ -14,7 +14,7 @@ from cartesapp.utils import hex2bytes, str2bytes
 
 class CoreSettings:
     initialized = False
-    configs_to_store = ['operator_address','internal_verify_lock','cartridge_moderation_lock','max_locked_cartridges']
+    configs_to_store = ['operator_address','cartridge_moderation_lock','max_locked_cartridges']
     def __new__(cls):
         # load configuration on reder node
         if not cls.initialized:
@@ -25,28 +25,29 @@ class CoreSettings:
             cls.rivemu_path = os.getenv('RIVEMU_PATH')
             cls.operator_address = (os.getenv('OPERATOR_ADDRESS') or "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").lower()
             cls.admin_address = cls.operator_address
-            cls.proxy_address = os.getenv('PROXY_ADDRESS').lower() if os.getenv('PROXY_ADDRESS') else None #"0xeFF4b7fACd2f3041184BB7Bf3A0E2bB63e452fd6"
             cls.genesis_cartridges = list(map(lambda s: s.strip(), os.getenv('GENESIS_CARTRIDGES').split(','))) \
-                if os.getenv('GENESIS_CARTRIDGES') is not None else \
-                    ['freedoom'] #['snake','freedoom','antcopter','monky','tetrix','particles']
+                if os.getenv('GENESIS_CARTRIDGES') is not None else ['freedoom']
             cls.genesis_rules = json.loads(os.getenv('GENESIS_RULES')) \
                 if os.getenv('GENESIS_RULES') is not None else {}
-            cls.internal_verify_lock = True
             cls.cartridge_moderation_lock = True
             cls.max_locked_cartridges = os.getenv('MAX_LOCKED_CARTRIDGES') or 100
             cls.initialized = True
         return cls
-    def store_config():
+
+    @classmethod
+    def store_config(cls):
         if Storage.STORAGE_PATH is not None:
             config = dict(
-                [a for a in 
-                    inspect.getmembers(CoreSettings(), lambda a:not(inspect.isroutine(a))) 
+                [a for a in
+                    inspect.getmembers(CoreSettings(), lambda a:not(inspect.isroutine(a)))
                     if a[0] in CoreSettings().configs_to_store
                     # not(a[0].startswith('__') and a[0].endswith('__'))
                     ])
             with open(get_config_filename(), 'wb') as f:
                 pickle.dump(config, f)
-    def load_config():
+
+    @classmethod
+    def load_config(cls):
         if Storage.STORAGE_PATH is not None:
             if os.path.exists(get_config_filename()):
                 f = open(get_config_filename(), 'rb')
@@ -94,13 +95,13 @@ def generate_cartridge_id(bin_data: bytes) -> str:
 def generate_rule_id(cartridge_id: bytes,version_cartridge_id: bytes,bytes_name: bytes) -> str:
     # return sha256(cartridge_id + bytes_name).hexdigest()
     return format_rule_id_from_bytes((
-            truncate_cartridge_id_from_bytes(cartridge_id) + 
-            truncate_cartridge_id_from_bytes(version_cartridge_id) + 
+            truncate_cartridge_id_from_bytes(cartridge_id) +
+            truncate_cartridge_id_from_bytes(version_cartridge_id) +
             keccak.new(digest_bits=256).update(bytes_name).digest()[:RULE_ID_TRUNC_BYTES]))
 
 def generate_tape_id(rule_id: bytes, bin_data: bytes) -> str:
     # return sha256(bin_data).hexdigest()
-    return format_tape_id_from_bytes((truncate_rule_id_from_bytes(rule_id) + 
+    return format_tape_id_from_bytes((truncate_rule_id_from_bytes(rule_id) +
             keccak.new(digest_bits=256).update(bin_data).digest()[:TAPE_ID_TRUNC_BYTES]))
 
 
@@ -127,6 +128,3 @@ def generate_entropy(user_address: str, rule_id: str) -> str:
 
 def generate_rule_parameters_tag(args: str, in_card: bytes, score_function: str) -> str:
     return f"args: '{args}', score_function: '{score_function}', incard hash: {sha256(in_card).hexdigest()}"
-
-
-

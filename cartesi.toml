@@ -1,14 +1,15 @@
 [machine]
-ram-length = "128Mi"
+ram_length = "256Mi"
 user = "root"
 entrypoint = "rollup-init /usr/local/bin/run_cartesapp debug"
 
 [drives.root]
 builder = "docker"
 dockerfile = "rootfs.dockerfile"
+build_args = ["OPERATOR_ADDRESS=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"]
 format = "ext2"
-extra-size = "4Mb"
-avoid-overwrite = "true"
+extra_size = "4Mb"
+avoid_overwrite = "true"
 
 [drives.app]
 builder = "directory"
@@ -20,7 +21,7 @@ mount = "/mnt/app/core"
 builder = "directory"
 directory = "./misc"
 format = "sqfs"
-avoid-overwrite = "true"
+avoid_overwrite = "true"
 mount = "/mnt/app/misc"
 
 [drives.cartridges]
